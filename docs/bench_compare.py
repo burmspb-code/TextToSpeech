@@ -1,17 +1,15 @@
-"""Head-to-head: Piper vs Silero на одинаковом тексте."""
-import sys
+"""Head-to-head: Piper против Silero на одинаковом тексте.
+
+Нужен оба движка: poetry install --with silero
+"""
 import time
 import wave
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".venv" / "Lib" / "site-packages"))
+import numpy as np
+from piper import PiperVoice
+from silero_tts.silero_tts import SileroTTS
 
-import numpy as np  # noqa: E402
-from piper import PiperVoice  # noqa: E402
-from silero_tts.silero_tts import SileroTTS  # noqa: E402
-
-OUT = Path(r"C:\Users\bur_s\AppData\Local\Temp\opencode")
-CACHE = Path.home() / ".local/share/piper-voices"
+from _common import VOICES_DIR, ensure_output_dir
 
 TEXT = (
     "Привет! Это сравнение двух офлайн движков синтеза речи. "
@@ -19,39 +17,46 @@ TEXT = (
 )
 
 
-def measure(path: Path, synth_s: float) -> tuple[float, float]:
+def measure(path, synth_s: float) -> tuple[float, float]:
+    """Возвращает (длительность аудио, RTF)."""
     with wave.open(str(path)) as w:
         dur = w.getnframes() / w.getframerate()
-        rate = w.getframerate()
     return dur, synth_s / dur
 
 
-def bench_piper(model: Path, dest: Path) -> None:
-    voice = PiperVoice.load(str(model))
+def main() -> None:
+    out_dir = ensure_output_dir()
+
+    # --- Piper ---
+    piper_wav = out_dir / "cmp_piper_ru.wav"
+    voice = PiperVoice.load(str(VOICES_DIR / "ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx"))
     t0 = time.perf_counter()
-    with wave.open(str(dest), "wb") as w:
+    with wave.open(str(piper_wav), "wb") as w:
         voice.synthesize_wav(TEXT, w)
-    dur, rtf = measure(dest, time.perf_counter() - t0)
-    print(f"Piper  ru (dmitri) : {dur:5.2f}s аудио, RTF={rtf:.3f}, {dest.stat().st_size / 1024:6.1f}KB, 22050 Hz")
+    dur, rtf = measure(piper_wav, time.perf_counter() - t0)
+    print(f"Piper  ru (dmitri)    : {dur:5.2f}s аудио, RTF={rtf:.3f}, "
+          f"{piper_wav.stat().st_size / 1024:6.1f}KB, 22050 Hz")
 
-
-def bench_silero(model_id: str, lang: str, dest: Path) -> None:
-    tts = SileroTTS(model_id=model_id, language=lang, sample_rate=24000)
+    # --- Silero ---
+    silero_wav = out_dir / "cmp_silero_ru.wav"
+    tts = SileroTTS(model_id="v5_turkic", language="ru", sample_rate=24000)
     t0 = time.perf_counter()
-    tts.tts(TEXT, str(dest))
-    dur, rtf = measure(dest, time.perf_counter() - t0)
-    print(f"Silero ru ({model_id}): {dur:5.2f}s аудио, RTF={rtf:.3f}, {dest.stat().st_size / 1024:6.1f}KB, 24000 Hz")
+    tts.tts(TEXT, str(silero_wav))
+    dur, rtf = measure(silero_wav, time.perf_counter() - t0)
+    print(f"Silero ru (v5_turkic) : {dur:5.2f}s аудио, RTF={rtf:.3f}, "
+          f"{silero_wav.stat().st_size / 1024:6.1f}KB, 24000 Hz")
+
+    # --- Уровень сигнала ---
+    print()
+    print("Уровень сигнала (RMS; выше — громче и разборчивее):")
+    for path in (piper_wav, silero_wav):
+        with wave.open(str(path)) as w:
+            samples = np.frombuffer(
+                w.readframes(w.getnframes()), dtype=np.int16
+            ).astype(np.float32)
+        rms = float(np.sqrt((samples**2).mean()))
+        print(f"  {path.name:20s} RMS={rms:8.1f}  peak={float(np.abs(samples).max()):6.0f}")
 
 
-bench_piper(
-    CACHE / "ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx",
-    OUT / "cmp_piper_ru.wav",
-)
-bench_silero("v5_turkic", "ru", OUT / "cmp_silero_ru.wav")
-
-print()
-print("Качество сигнала (RMS, чем ближе к типичной речи — тем лучше):")
-for p in (OUT / "cmp_piper_ru.wav", OUT / "cmp_silero_ru.wav"):
-    with wave.open(str(p)) as w:
-        a = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32)
-    print(f"  {p.name:18s} RMS={np.sqrt((a**2).mean()):8.1f}  peak={np.abs(a).max():6.0f}")
+if __name__ == "__main__":
+    main()

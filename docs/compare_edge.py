@@ -1,21 +1,39 @@
-"""Пример 1: edge-tts (онлайн, Microsoft Edge)."""
+"""Пример: edge-tts (онлайн, Microsoft Edge).
+
+Даёт лучшее качество речи, но требует интернет и иногда падает с
+NoAudioReceived — сервер открывает соединение и закрывает его без
+аудио. Сбой нерегулярный: бывает три раза подряд, бывает не
+встречается вообще. Поэтому в приложении это запасной движок,
+а основной — Piper.
+
+Установка: poetry install --with edge
+"""
 import asyncio
+
 import edge_tts
 
-TEXT_RU = "Привет! Это проверка русского голоса в приложении."
-TEXT_EN = "Hello! This is an English voice check."
+from _common import ensure_output_dir
+
+CASES = [
+    ("ru-RU-DmitryNeural", "Привет! Это проверка русского голоса."),
+    ("ru-RU-SvetlanaNeural", "Привет! Это проверка женского голоса."),
+    ("en-GB-RyanNeural", "Hello! This is an English voice check."),
+]
 
 
 async def main() -> None:
-    out = "C:\\Users\\bur_s\\AppData\\Local\\Temp\\opencode\\edge_ru.mp3"
-    # ru-RU-Dmitry — мужской, ru-RU-Svetlana — женский
-    for name, text, dest in (
-        ("ru-RU-DmitryNeural", TEXT_RU, out),
-        ("en-GB-RyanNeural", TEXT_EN, out.replace("ru", "en")),
-    ):
+    out_dir = ensure_output_dir()
+
+    for name, text in CASES:
+        dest = out_dir / f"edge_{name}.mp3"
         comm = edge_tts.Communicate(text, name)
-        await comm.save(dest)
+        try:
+            await comm.save(str(dest))
+        except edge_tts.exceptions.NoAudioReceived:
+            print(f"[RETRY] {name}: сервер не вернул аудио — попробуйте ещё раз")
+            continue
         print(f"[OK] {name} -> {dest}")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

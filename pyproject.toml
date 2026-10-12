@@ -1,16 +1,52 @@
 [project]
 name = "texttospeech"
 version = "0.1.0"
-description = ""
+description = "Офлайн-приложение для синтеза речи из текста (Piper + Tkinter)"
 authors = [
     {name = "Mikhail Burdukovsky",email = "burmspb@gmail.com"}
 ]
 readme = "README.md"
-requires-python = "^3.14"
+requires-python = ">=3.14,<4.0"
+
+# Основной движок — полностью офлайн, работает на CPU.
 dependencies = [
+    "piper-tts (>=1.8.0)",
+    "requests (>=2.32)",
 ]
 
+[project.optional-dependencies]
+# Онлайн-движок Microsoft. Лучшее качество, но требует сеть и доступ
+# к серверам Microsoft — в ряде регионов синтез блокируется.
+edge = [
+    "edge-tts (>=7.2)",
+]
+
+# Офлайн-движник на PyTorch. Тянет ~2.5 ГБ, качество ниже Piper.
+silero = [
+    "silero-tts (>=0.0.5)",
+    "torch (>=2.9)",
+    "torchaudio (>=2.9)",
+]
+
+# PEP 735. В отличие от extras, ставится автоматически вместе с основными
+# зависимостями — pytest нужен всегда.
+[dependency-groups]
+dev = [
+    "pytest (>=8.0)",
+]
+
+[project.gui-scripts]
+texttospeech = "texttospeech.app:main"
+
+[tool.poetry]
+packages = [
+    {include = "texttospeech", from = "src"},
+]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
