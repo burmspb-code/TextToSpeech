@@ -1,0 +1,25 @@
+# --- Окружение ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- IDE ---
+.idea/
+.vscode/
+
+# --- Сгенерированное аудио ---
+output/*.wav
+output/*.mp3
+output/*.ogg
+
+# --- Модели (скачиваются при установке, ~60 МБ каждая) ---
+models/
+*.onnx
+*.onnx.json
+
+# --- Кэши инструментов ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
