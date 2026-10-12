@@ -1,0 +1,14 @@
+# Нормализация переносов строк: в репозитории всегда LF,
+# в рабочей копии на Windows — CRLF.
+* text=auto
+
+*.py   text diff=python
+*.md   text
+*.toml text
+*.yml  text
+*.yaml text
+
+# Модели и аудио — бинарные, не трогать переносы
+*.onnx binary
+*.wav  binary
+*.mp3  binary
