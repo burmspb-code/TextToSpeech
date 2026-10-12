@@ -1,13 +1,26 @@
 """Графический интерфейс (Tkinter), светлая тема.
 
-Состояние заготовки: файл открывается и показывается, кнопка «Озвучить»
-пока ничего не синтезирует.
+Синтез выполняется в отдельном потоке: работа движка занимает секунды,
+и главный поток Tkinter всё это время должен оставаться отзывчивым.
+Результаты потока возвращаются в очередь и разбираются через after().
 """
+import queue
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
 
 from . import __version__
+from .audio import Player, concat_wavs
+from .engines import PiperEngine, split_text
+from .voices import (
+    CATALOG,
+    DEFAULT_VOICE_KEY,
+    Voice,
+    find_voice,
+    find_voice_by_label,
+    voice_size_mb,
+)
 
 # --- Палитра светлой темы ---
 BG = "#F4F6F8"        # фон окна
@@ -19,6 +32,10 @@ ACCENT = "#2F6FEB"    # основной акцент
 ACCENT_HOVER = "#2560D4"
 ACCENT_ACTIVE = "#1D4FB8"
 DANGER = "#CF222E"
+SUCCESS = "#1A7F37"
+
+# Куда складываются готовые дорожки.
+OUTPUT_DIR = Path.home() / ".local" / "share" / "texttospeech"
 
 FONT = "Segoe UI"
 FONT_SIZE = 10
@@ -80,6 +97,14 @@ def setup_styles(root: tk.Tk) -> None:
         font=(FONT, 15, "bold"),
     )
     style.configure("Status.TLabel", background=BG, foreground=TEXT_DIM, font=(FONT, 9))
+    style.configure(
+        "Horizontal.TProgressbar",
+        background=ACCENT,
+        troughcolor=BORDER,
+        bordercolor=BORDER,
+        lightcolor=ACCENT,
+        darkcolor=ACCENT,
+    )
 
     style.configure(
         "TButton",
@@ -131,13 +156,24 @@ class TTSApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.current_path: Path | None = None
+        self.current_text: str = ""
         # Сохраняем ссылку, чтобы тесты и внешний код находили приложение.
         root.tts_app = self
 
         root.title(f"TextToSpeech {__version__}")
         root.geometry("860x620")
-        root.minsize(640, 480)
+        root.minsize(640, 520)
         root.configure(bg=BG)
+
+        self.engine = PiperEngine()
+        self.player = Player()
+        self.last_audio: Path | None = None
+        self.busy = False
+        # Поток докладывает о ходе дела сюда, главный поток забирает
+        # через after(). Обмен через очередь — единственный безопасный
+        # способ передачи данных между потоками в Tkinter.
+        self.events: queue.Queue[tuple[str, object]] = queue.Queue()
+        self._worker: threading.Thread | None = None
 
         setup_styles(root)
         self._build()
@@ -212,12 +248,13 @@ class TTSApp:
 
         self.voice_box = ttk.Combobox(
             panel,
-            values=["ru_RU dmitri", "ru_RU irina", "en_US ryan"],
+            values=[v.label for v in CATALOG],
             state="readonly",
             width=22,
         )
-        self.voice_box.set("ru_RU dmitri")
-        self.voice_box.pack(side="left", padx=(8, 20))
+        self.voice_box.set(self._label_of(DEFAULT_VOICE_KEY))
+        self.voice_box.pack(side="left", padx=(8, 16))
+        self.voice_box.bind("<<ComboboxSelected>>", lambda _e: self._on_voice_changed())
 
         ttk.Label(panel, text="Скорость", style="Dim.TLabel").pack(side="left")
 
@@ -225,10 +262,18 @@ class TTSApp:
             panel,
             values=["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"],
             state="readonly",
-            width=8,
+            width=7,
         )
         self.speed_box.set("1.0x")
-        self.speed_box.pack(side="left", padx=(8, 0))
+        self.speed_box.pack(side="left", padx=(8, 16))
+
+        self.play_button = ttk.Button(
+            panel,
+            text="Стоп",
+            command=self.stop_playback,
+            state="disabled",
+        )
+        self.play_button.pack(side="right", padx=(0, 8))
 
         self.speak_button = ttk.Button(
             panel,
@@ -237,6 +282,10 @@ class TTSApp:
             command=self.on_synthesize,
         )
         self.speak_button.pack(side="right")
+
+        self.progress = ttk.Progressbar(panel, mode="determinate", length=160)
+        self.progress.pack(side="right", padx=(0, 16))
+        self.progress.pack_forget()
 
     def _build_statusbar(self, parent: tk.Widget) -> None:
         self.status_label = ttk.Label(parent, text="", style="Status.TLabel")
@@ -263,6 +312,7 @@ class TTSApp:
             return
 
         self.current_path = path
+        self.current_text = content
         self.path_label.configure(text=f"{path.name}  ({encoding})")
 
         self._set_text(content)
@@ -283,22 +333,161 @@ class TTSApp:
 
     def clear_file(self) -> None:
         self.current_path = None
+        self.current_text = ""
         self.path_label.configure(text="Файл не выбран")
         self._set_text("")
         self.set_status("Файл очищен.")
 
-    def on_synthesize(self) -> None:
-        """Заглушка: синтез подключим следующим шагом."""
-        if self.current_path is None:
-            self.set_status("Сначала откройте файл.", error=True)
-            return
-        self.set_status("Синтез пока не подключён — это следующий шаг.")
+    # --- Голос и скорость ---
 
-    def set_status(self, text: str, *, error: bool = False) -> None:
-        self.status_label.configure(
-            text=text,
-            foreground=DANGER if error else TEXT_DIM,
+    @staticmethod
+    def _label_of(key: str) -> str:
+        return find_voice(key).label
+
+    @property
+    def selected_voice(self) -> Voice:
+        return find_voice_by_label(self.voice_box.get())
+
+    @property
+    def selected_speed(self) -> float:
+        return float(self.speed_box.get().rstrip("x"))
+
+    def _on_voice_changed(self) -> None:
+        voice = self.selected_voice
+        if voice.is_downloaded:
+            self.set_status(f"Голос {voice.title} уже загружен.")
+        else:
+            mb = voice_size_mb(voice)
+            self.set_status(f"Голос {voice.title} будет скачан при синтезе (~{mb:.0f} МБ).")
+
+    # --- Синтез ---
+
+    def on_synthesize(self) -> None:
+        """Запускает синтез в фоновом потоке."""
+        if self.busy:
+            return
+        if not self.current_text.strip():
+            self.set_status("Сначала откройте файл с текстом.", error=True)
+            return
+        if not self.engine.is_available():
+            self.set_status("Пакет piper-tts не установлен.", error=True)
+            return
+
+        voice = self.selected_voice
+        speed = self.selected_speed
+
+        self._set_busy(True)
+        self.player.stop()
+        self.progress.configure(value=0, maximum=100)
+        self.progress.pack(side="right", padx=(0, 16))
+
+        if voice.is_downloaded:
+            self.set_status(f"Синтез голосом {voice.title}...")
+        else:
+            self.set_status(f"Скачиваю голос {voice.title} (~60 МБ)...")
+
+        self._worker = threading.Thread(
+            target=self._synthesize_worker,
+            args=(self.current_text, voice, speed),
+            daemon=True,
         )
+        self._worker.start()
+        self._poll_events()
+
+    def _synthesize_worker(self, text: str, voice: Voice, speed: float) -> None:
+        """Синтез в отдельном потоке. Всё общение с UI — через очередь."""
+        try:
+            if not voice.is_downloaded:
+                def on_progress(done: int, total: int) -> None:
+                    if total:
+                        percent = min(100, done * 100 // total)
+                        self.events.put(("download", percent))
+
+                self.events.put(("status", f"Скачиваю голос {voice.title}..."))
+                self.engine.prepare(voice, on_progress=on_progress)
+
+            chunks = split_text(text)
+            if not chunks:
+                self.events.put(("error", "В файле нет текста для синтеза."))
+                return
+
+            parts_dir = OUTPUT_DIR / "parts"
+            parts_dir.mkdir(parents=True, exist_ok=True)
+
+            results = []
+            for index, chunk in enumerate(chunks, start=1):
+                part = parts_dir / f"part_{index:04d}.wav"
+                self.events.put(("progress", index * 100 // len(chunks)))
+                results.append(
+                    self.engine.synthesize(chunk, voice, part, speed=speed).path
+                )
+
+            dest = OUTPUT_DIR / f"{voice.key}_{speed:g}x.wav"
+            duration = concat_wavs(results, dest)
+            self.events.put(("done", (dest, duration, len(chunks))))
+
+        except Exception as exc:  # noqa: BLE001 — показываем пользователю любую ошибку
+            self.events.put(("error", f"{type(exc).__name__}: {exc}"))
+
+    def _poll_events(self) -> None:
+        """Разбирает очередь событий из рабочего потока."""
+        try:
+            while True:
+                kind, payload = self.events.get_nowait()
+                self._handle_event(kind, payload)
+        except queue.Empty:
+            pass
+
+        if self.busy:
+            self.root.after(50, self._poll_events)
+
+    def _handle_event(self, kind: str, payload: object) -> None:
+        if kind == "download":
+            self.progress.configure(value=int(payload))  # type: ignore[arg-type]
+        elif kind == "progress":
+            self.progress.configure(value=int(payload))  # type: ignore[arg-type]
+            self.set_status(f"Синтез: {payload}%")
+        elif kind == "status":
+            self.set_status(str(payload))
+        elif kind == "error":
+            self._set_busy(False)
+            self.set_status(str(payload), error=True)
+        elif kind == "done":
+            dest, duration, parts = payload  # type: ignore[misc]
+            self.last_audio = dest  # type: ignore[assignment]
+            self._set_busy(False)
+            self.play_button.configure(state="normal")
+            played = self.player.play(self.last_audio)
+            self.set_status(
+                f"Готово: {duration:.1f} c, {parts} "
+                f"{plural_ru(parts, 'фрагмент', 'фрагмента', 'фрагментов')}."
+                + ("" if played else " Откройте файл в плеере вручную."),
+                success=True,
+            )
+
+    def _set_busy(self, busy: bool) -> None:
+        self.busy = busy
+        self.speak_button.configure(state="disabled" if busy else "normal")
+        self.voice_box.configure(state="disabled" if busy else "readonly")
+        self.speed_box.configure(state="disabled" if busy else "readonly")
+        if not busy:
+            self.progress.pack_forget()
+
+    # --- Воспроизведение ---
+
+    def stop_playback(self) -> None:
+        self.player.stop()
+        self.play_button.configure(state="disabled")
+        self.set_status("Воспроизведение остановлено.")
+
+    def set_status(self, text: str, *, error: bool = False, success: bool = False) -> None:
+        if error:
+            color = DANGER
+        elif success:
+            color = SUCCESS
+        else:
+            color = TEXT_DIM
+        self.status_label.configure(text=text, foreground=color)
 
 
 def build_window() -> tk.Tk:

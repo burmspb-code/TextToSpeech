@@ -1,20 +1,27 @@
 """Открывает окно приложения и сохраняет его скриншот в output/.
 
-Запуск:  poetry run python docs/screenshot.py
-"""
-from pathlib import Path
+    poetry run python docs/screenshot.py          — исходное состояние
+    poetry run python docs/screenshot.py after    — после синтеза
 
+Скриншот снимается экраном, поэтому окно должно быть видно: скрипт
+поднимает его поверх остальных и снимает область окна.
+"""
+import subprocess
+import sys
+import threading
 import tkinter as tk
+from pathlib import Path
 
 from texttospeech.app import TTSApp
 
-OUT = Path(__file__).resolve().parents[1] / "output"
-SAMPLE = "example.txt"
+PROJECT = Path(__file__).resolve().parents[1]
+OUT = PROJECT / "output"
+SAMPLE = OUT / "example.txt"
 
 
 def make_sample() -> Path:
-    path = OUT / SAMPLE
-    path.write_text(
+    OUT.mkdir(parents=True, exist_ok=True)
+    SAMPLE.write_text(
         "Синтез речи из текста\n"
         "\n"
         "Этот текст будет озвучен встроенным движком Piper. "
@@ -24,18 +31,13 @@ def make_sample() -> Path:
         "Проверка знаков: 0123456789 — «кавычки», тире, точка с запятой.\n",
         encoding="utf-8",
     )
-    return path
+    return SAMPLE
 
 
 def capture(widget: tk.Misc, dest: Path) -> None:
-    """Сохраняет снимок области окна через Pillow-free код PowerShell."""
-    import subprocess
-    import sys
-
-    x = widget.winfo_rootx()
-    y = widget.winfo_rooty()
-    w = widget.winfo_width()
-    h = widget.winfo_height()
+    """Снимает область окна средствами Windows."""
+    x, y = widget.winfo_rootx(), widget.winfo_rooty()
+    w, h = widget.winfo_width(), widget.winfo_height()
 
     script = f"""
 Add-Type -AssemblyName System.Drawing
@@ -48,12 +50,28 @@ $g.Dispose(); $bmp.Dispose()
     subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True)
 
 
+def run_event_loop(root: tk.Tk, predicate, limit: float = 120.0) -> None:
+    """Крутит цикл Tkinter, пока предикат не станет истинным."""
+    import time
+
+    deadline = time.monotonic() + limit
+    while not predicate() and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.01)
+
+
 def main() -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
+    after_synthesis = "after" in sys.argv
 
     root = tk.Tk()
     app = TTSApp(root)
     app._load_path(make_sample())
+
+    if after_synthesis:
+        root.attributes("-topmost", True)
+        app.on_synthesize()
+        run_event_loop(root, lambda: not app.busy)
+        print(f"синтез завершён: {app.last_audio}")
 
     root.update_idletasks()
     root.update()
@@ -61,7 +79,7 @@ def main() -> None:
     root.attributes("-topmost", True)
     root.update()
 
-    dest = OUT / "screenshot_gui.png"
+    dest = OUT / f"screenshot_gui{'_after' if after_synthesis else ''}.png"
     capture(root, dest)
     print(f"скриншот сохранён: {dest}")
 
