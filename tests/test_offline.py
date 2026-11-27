@@ -13,7 +13,9 @@ from pathlib import Path
 
 import pytest
 
-VOICE = Path.home() / ".local/share/piper-voices/ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx"
+from texttospeech.voices import find_voice
+
+VOICE = find_voice("ru_RU-dmitri-medium").model_path
 TEXT = "Этот текст синтезируется без интернета."
 
 

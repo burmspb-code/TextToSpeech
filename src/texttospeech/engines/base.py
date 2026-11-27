@@ -1,7 +1,7 @@
 """Интерфейс движка синтеза.
 
-Позволяет менять движок, не трогая интерфейс: сейчас есть Piper,
-затем можно добавить edge-tts и Silero.
+Позволяет менять движок, не трогая интерфейс: сейчас есть Piper и Silero,
+затем можно добавить edge-tts.
 """
 from dataclasses import dataclass
 from pathlib import Path

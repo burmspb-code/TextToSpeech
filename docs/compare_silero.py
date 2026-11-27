@@ -1,36 +1,41 @@
-"""Пример: Silero TTS (офлайн, torch).
+"""Пример: офлайн-синтез Silero голосом из каталога приложения.
 
-Пакет silero-tts 0.0.5 не содержит __init__.py, поэтому
-`from silero_tts import SileroTTS` падает с ImportError.
-Работает прямой импорт подмодуля — он разрешается как namespace-пакет.
+Модели хранятся в ``models/silero``; SileroEngine подключает нужный .pt
+к кэшу пакета silero-tts, поэтому пример работает без повторной загрузки.
 """
 import time
 
 from _common import ensure_output_dir
-from silero_tts.silero_tts import SileroTTS
 
-CASES = [
-    ("ru", "v5_turkic", "Привет! Это офлайн синтез Silero."),
-    ("en", "v3_en", "Hello! This is offline Silero synthesis."),
-]
+from texttospeech.engines import SileroEngine
+from texttospeech.voices import find_voice
+
+CASES = (
+    ("silero-v5_5_ru-xenia-24000", "Привет! Это офлайн синтез Silero."),
+    ("silero-v5_5_ru-aidar-24000", "Как дела? Это второй голос."),
+)
 
 
 def main() -> None:
     out_dir = ensure_output_dir()
+    engine = SileroEngine()
 
-    for lang, model_id, text in CASES:
+    for key, text in CASES:
+        voice = find_voice(key)
         t0 = time.perf_counter()
-        tts = SileroTTS(model_id=model_id, language=lang, sample_rate=24000)
+        engine.prepare(voice)
         load_s = time.perf_counter() - t0
 
-        dest = out_dir / f"silero_{lang}.wav"
+        dest = out_dir / f"silero_{voice.name}.wav"
         t0 = time.perf_counter()
-        tts.tts(text, str(dest))
+        engine.synthesize(text, voice, dest)
         synth_s = time.perf_counter() - t0
 
         size_kb = dest.stat().st_size / 1024
-        print(f"[OK] {lang}/{model_id}: загрузка {load_s:.1f}s, "
-              f"синтез {synth_s:.1f}s, файл {size_kb:.1f}KB  -> {dest}")
+        print(
+            f"[OK] {voice.title} ({key}): загрузка {load_s:.1f}s, "
+            f"синтез {synth_s:.1f}s, файл {size_kb:.1f}KB  -> {dest}"
+        )
 
 
 if __name__ == "__main__":

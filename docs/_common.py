@@ -12,8 +12,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 # Куда складывать сгенерированное аудио.
 OUTPUT_DIR = PROJECT_ROOT / "output"
 
-# Куда piper скачивает голоса.
-VOICES_DIR = Path.home() / ".local" / "share" / "piper-voices"
+# Все скачанные модели лежат в отдельной папке проекта.
+MODELS_DIR = PROJECT_ROOT / "models"
+VOICES_DIR = MODELS_DIR / "piper"
+SILERO_MODELS_DIR = MODELS_DIR / "silero"
 
 # Базовый URL моделей Piper на Hugging Face.
 HF_BASE = "https://huggingface.co/rhasspy/piper-voices/resolve/main"

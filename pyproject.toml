@@ -1,7 +1,7 @@
 [project]
 name = "texttospeech"
 version = "0.1.0"
-description = "Офлайн-приложение для синтеза речи из текста (Piper + PyQt6)"
+description = "Офлайн-приложение для синтеза речи из текста (Piper, Silero + PyQt6)"
 authors = [
     {name = "Mikhail Burdukovsky",email = "burmspb@gmail.com"}
 ]
@@ -47,6 +47,7 @@ texttospeech = "texttospeech.app:main"
 packages = [
     {include = "texttospeech", from = "src"},
 ]
+include = ["src/texttospeech/assets/tts.png"]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
