@@ -2,9 +2,8 @@
 import wave
 
 import requests
-from piper import PiperVoice
-
 from _common import HF_BASE, VOICES_DIR, ensure_output_dir
+from piper import PiperVoice
 
 VOICES = {
     "ru_RU-dmitri-medium": "ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx",

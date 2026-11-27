@@ -16,9 +16,13 @@ for prefix in ("ru_RU", "en_US", "en_GB"):
             continue
         if "high" in key or "low" in key or "x_low" in key:
             continue
-        if key.startswith("en_US-libritts") or key.startswith("en_US-mike") \
-                or key.startswith("en_US-ljspeech") or key.startswith("en_US-norman") \
-                or key.startswith("en_US-reza"):
+        if key.startswith((
+            "en_US-libritts",
+            "en_US-mike",
+            "en_US-ljspeech",
+            "en_US-norman",
+            "en_US-reza",
+        )):
             continue
         lang = entry.get("language", {})
         speakers = entry.get("speaker_id_map", {})

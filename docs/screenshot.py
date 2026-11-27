@@ -3,14 +3,13 @@
     poetry run python docs/screenshot.py          — исходное состояние
     poetry run python docs/screenshot.py after    — после синтеза
 
-Скриншот снимается экраном, поэтому окно должно быть видно: скрипт
-поднимает его поверх остальных и снимает область окна.
+Скриншот снимается через QWidget.grab(), поэтому окно может быть не видно.
 """
-import subprocess
 import sys
-import threading
-import tkinter as tk
+import time
 from pathlib import Path
+
+from PyQt6.QtWidgets import QApplication
 
 from texttospeech.app import TTSApp
 
@@ -34,56 +33,38 @@ def make_sample() -> Path:
     return SAMPLE
 
 
-def capture(widget: tk.Misc, dest: Path) -> None:
-    """Снимает область окна средствами Windows."""
-    x, y = widget.winfo_rootx(), widget.winfo_rooty()
-    w, h = widget.winfo_width(), widget.winfo_height()
-
-    script = f"""
-Add-Type -AssemblyName System.Drawing
-$bmp = New-Object System.Drawing.Bitmap {w}, {h}
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.CopyFromScreen({x}, {y}, 0, 0, $bmp.Size)
-$bmp.Save('{dest}', [System.Drawing.Imaging.ImageFormat]::Png)
-$g.Dispose(); $bmp.Dispose()
-"""
-    subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True)
-
-
-def run_event_loop(root: tk.Tk, predicate, limit: float = 120.0) -> None:
-    """Крутит цикл Tkinter, пока предикат не станет истинным."""
-    import time
-
+def wait_while_busy(window: TTSApp, qapp: QApplication, limit: float = 120.0) -> None:
+    """Крутит цикл Qt, пока синтез не завершится."""
     deadline = time.monotonic() + limit
-    while not predicate() and time.monotonic() < deadline:
-        root.update()
+    while window.busy and time.monotonic() < deadline:
+        qapp.processEvents()
         time.sleep(0.01)
 
 
 def main() -> None:
     after_synthesis = "after" in sys.argv
 
-    root = tk.Tk()
-    app = TTSApp(root)
-    app._load_path(make_sample())
+    qapp = QApplication.instance() or QApplication(sys.argv)
+    window = TTSApp()
+    window.show()
+    window._load_path(make_sample())
 
     if after_synthesis:
-        root.attributes("-topmost", True)
-        app.on_synthesize()
-        run_event_loop(root, lambda: not app.busy)
-        print(f"синтез завершён: {app.last_audio}")
+        window.raise_()
+        window.activateWindow()
+        window.on_synthesize()
+        wait_while_busy(window, qapp)
+        print(f"синтез завершён: {window.last_audio}")
 
-    root.update_idletasks()
-    root.update()
-    root.lift()
-    root.attributes("-topmost", True)
-    root.update()
+    qapp.processEvents()
+    window.raise_()
+    window.activateWindow()
 
     dest = OUT / f"screenshot_gui{'_after' if after_synthesis else ''}.png"
-    capture(root, dest)
+    window.grab().save(str(dest))
     print(f"скриншот сохранён: {dest}")
 
-    root.destroy()
+    window.close()
 
 
 if __name__ == "__main__":

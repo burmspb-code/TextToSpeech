@@ -1,16 +1,18 @@
 [project]
 name = "texttospeech"
 version = "0.1.0"
-description = "Офлайн-приложение для синтеза речи из текста (Piper + Tkinter)"
+description = "Офлайн-приложение для синтеза речи из текста (Piper + PyQt6)"
 authors = [
     {name = "Mikhail Burdukovsky",email = "burmspb@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.14,<4.0"
+# torch 2.11 тянет triton с ограничением <3.15 — сужаем диапазон честно.
+requires-python = ">=3.14,<3.15"
 
 # Основной движок — полностью офлайн, работает на CPU.
 dependencies = [
     "piper-tts (>=1.8.0)",
+    "pyqt6 (>=6.8)",
     "requests (>=2.32)",
 ]
 
@@ -24,8 +26,10 @@ edge = [
 # Офлайн-движник на PyTorch. Тянет ~2.5 ГБ, качество ниже Piper.
 silero = [
     "silero-tts (>=0.0.5)",
-    "torch (>=2.9)",
-    "torchaudio (>=2.9)",
+    # Версии torch и torchaudio должны совпадать: с 2.14/2.11 импорт
+    # проходит, но это несовместимое сочетание.
+    "torch (>=2.11,<2.12)",
+    "torchaudio (>=2.11,<2.12)",
 ]
 
 # PEP 735. В отличие от extras, ставится автоматически вместе с основными
@@ -33,6 +37,7 @@ silero = [
 [dependency-groups]
 dev = [
     "pytest (>=8.0)",
+    "ruff (>=0.17.6)",
 ]
 
 [project.gui-scripts]

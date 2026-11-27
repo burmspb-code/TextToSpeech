@@ -1,15 +1,14 @@
 """Head-to-head: Piper против Silero на одинаковом тексте.
 
-Нужен оба движка: poetry install --with silero
+Нужны оба движка: poetry install -E silero
 """
 import time
 import wave
 
 import numpy as np
+from _common import VOICES_DIR, ensure_output_dir
 from piper import PiperVoice
 from silero_tts.silero_tts import SileroTTS
-
-from _common import VOICES_DIR, ensure_output_dir
 
 TEXT = (
     "Привет! Это сравнение двух офлайн движков синтеза речи. "

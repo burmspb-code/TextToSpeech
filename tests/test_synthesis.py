@@ -1,21 +1,20 @@
 """Тесты синтеза: движок, склейка аудио и полный путь через GUI."""
-import threading
-import tkinter as tk
+import time
 import wave
 from pathlib import Path
 
 import pytest
+from PyQt6.QtWidgets import QApplication
 
-pytest.importorskip("tkinter", reason="Tkinter недоступен")
-
-from texttospeech.audio import (  # noqa: E402
+from texttospeech.app import TTSApp
+from texttospeech.audio import (
     AudioFormatMismatch,
     Player,
     concat_wavs,
     wav_duration,
 )
-from texttospeech.engines import PiperEngine, split_text  # noqa: E402
-from texttospeech.voices import (  # noqa: E402
+from texttospeech.engines import PiperEngine, split_text
+from texttospeech.voices import (
     CATALOG,
     find_voice,
     find_voice_by_label,
@@ -239,36 +238,29 @@ def test_engine_output_is_valid_wav(tmp_path: Path) -> None:
 
 @pytest.mark.slow
 @pytestmark_audio
-def test_gui_synthesize_flow(tmp_path: Path, monkeypatch) -> None:
+def test_gui_synthesize_flow(
+    window: TTSApp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Файл → кнопка «Озвучить» → готовый WAV.
 
-    Синтез идёт в отдельном потоке, поэтому ждём результата в цикле,
-    пока держим цикл событий Tkinter.
+    Синтез идёт в отдельном потоке, поэтому крутим цикл событий Qt,
+    пока приложение не перестанет быть занятым.
     """
-    import texttospeech.app as app_module
-
-    monkeypatch.setattr(app_module, "OUTPUT_DIR", tmp_path)
-
-    root = tk.Tk()
-    app = app_module.TTSApp(root)
+    monkeypatch.setattr("texttospeech.app.OUTPUT_DIR", tmp_path)
 
     source = tmp_path / "text.txt"
     source.write_text("Привет! Это проверка полного пути.", encoding="utf-8")
-    app._load_path(source)
+    window._load_path(source)
 
-    app.on_synthesize()
-    assert app.busy, "синтез должен запуститься в фоне"
+    window.on_synthesize()
+    assert window.busy, "синтез должен запуститься в фоне"
 
-    deadline = threading.Event()
-    steps = 0
-    while app.busy and steps < 2000:
-        root.update()
-        steps += 1
-        deadline.wait(0.01)
+    deadline = time.monotonic() + 120
+    while window.busy and time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.01)
 
-    assert not app.busy, "синтез не завершился за отведённое время"
-    assert app.last_audio is not None, "файл не создан"
-    assert app.last_audio.exists()
-    assert app.last_audio.stat().st_size > 0
-
-    root.destroy()
+    assert not window.busy, "синтез не завершился за отведённое время"
+    assert window.last_audio is not None, "файл не создан"
+    assert window.last_audio.exists()
+    assert window.last_audio.stat().st_size > 0

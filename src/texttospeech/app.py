@@ -1,14 +1,30 @@
-"""Графический интерфейс (Tkinter), светлая тема.
+"""Графический интерфейс (PyQt6), светлая тема.
 
 Синтез выполняется в отдельном потоке: работа движка занимает секунды,
-и главный поток Tkinter всё это время должен оставаться отзывчивым.
-Результаты потока возвращаются в очередь и разбираются через after().
+и главный поток Qt всё это время должен оставаться отзывчивым.
+Результаты потока возвращаются в очередь и разбираются через QTimer.
 """
 import queue
+import sys
 import threading
-import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QKeySequence, QShortcut, QTextCursor
+from PyQt6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from . import __version__
 from .audio import Player, concat_wavs
@@ -41,10 +57,7 @@ FONT = "Segoe UI"
 FONT_SIZE = 10
 
 # Файлы, которые имеет смысл открывать.
-FILE_TYPES = [
-    ("Текстовые файлы", "*.txt *.md *.text"),
-    ("Все файлы", "*.*"),
-]
+FILE_TYPES = "Текстовые файлы (*.txt *.md *.text);;Все файлы (*)"
 
 # Кодировки для чтения. Русские тексты часто лежат в windows-1251.
 ENCODINGS = ("utf-8", "cp1251", "latin-1")
@@ -53,6 +66,32 @@ ENCODINGS = ("utf-8", "cp1251", "latin-1")
 # utf-8 без ошибок, поэтому в общем списке она помечала бы обычный
 # файл как имеющий BOM, а при сохранении добавила бы лишние байты.
 UTF8_BOM = b"\xef\xbb\xbf"
+
+STYLE_SHEET = f"""
+QWidget#central {{ background: {BG}; color: {TEXT};
+                   font-family: '{FONT}'; font-size: {FONT_SIZE}pt; }}
+QWidget#card {{ background: {SURFACE}; border: 1px solid {BORDER};
+                border-radius: 6px; }}
+QLabel#Title {{ color: {TEXT}; font-size: 15pt; font-weight: 700; }}
+QLabel#Dim {{ color: {TEXT_DIM}; }}
+QPushButton {{ background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER};
+               border-radius: 6px; padding: 8px 14px; }}
+QPushButton:hover {{ background: #EAEEF2; }}
+QPushButton:disabled {{ background: {BG}; color: #A8B0B8; }}
+QPushButton#Accent {{ background: {ACCENT}; color: #FFFFFF;
+                      border-color: {ACCENT}; font-weight: 700; padding: 9px 22px; }}
+QPushButton#Accent:hover {{ background: {ACCENT_HOVER}; }}
+QPushButton#Accent:pressed {{ background: {ACCENT_ACTIVE}; }}
+QPushButton#Accent:disabled {{ background: #B6C6E4; color: #EEF2F9; }}
+QComboBox {{ background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER};
+             border-radius: 6px; padding: 6px 8px; }}
+QComboBox:disabled {{ background: {BG}; color: #A8B0B8; }}
+QPlainTextEdit {{ background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER};
+                  border-radius: 6px; padding: 14px 16px; font-size: 11pt;
+                  selection-background-color: #CCE0FF; }}
+QProgressBar {{ border: 1px solid {BORDER}; border-radius: 6px; text-align: center; }}
+QProgressBar::chunk {{ background: {ACCENT}; }}
+"""
 
 
 def plural_ru(number: int, one: str, few: str, many: str) -> str:
@@ -88,253 +127,173 @@ def read_text_file(path: Path) -> tuple[str, str]:
     raise ValueError(f"Не удалось определить кодировку файла {path.name}")
 
 
-def setup_styles(root: tk.Tk) -> None:
-    """Настраивает виджеты под светлую тему."""
-    style = ttk.Style(root)
-    # «clam» — единственная тема ttk, где цвета задаются вручную.
-    style.theme_use("clam")
+class TTSApp(QMainWindow):
+    """Главное окно приложения."""
 
-    root.option_add("*Font", (FONT, FONT_SIZE))
+    def __init__(self) -> None:
+        # QApplication должен существовать до создания любого QWidget.
+        self.qapp = QApplication.instance() or QApplication(sys.argv)
+        super().__init__()
 
-    style.configure("TFrame", background=BG)
-    style.configure("Surface.TFrame", background=SURFACE)
-    style.configure("Card.TFrame", background=SURFACE, relief="flat")
-
-    style.configure("TLabel", background=BG, foreground=TEXT, font=(FONT, FONT_SIZE))
-    style.configure("Surface.TLabel", background=SURFACE, foreground=TEXT)
-    style.configure("Dim.TLabel", background=SURFACE, foreground=TEXT_DIM)
-    style.configure("BgDim.TLabel", background=BG, foreground=TEXT_DIM)
-    style.configure(
-        "Title.TLabel",
-        background=SURFACE,
-        foreground=TEXT,
-        font=(FONT, 15, "bold"),
-    )
-    style.configure("Status.TLabel", background=BG, foreground=TEXT_DIM, font=(FONT, 9))
-    style.configure(
-        "Horizontal.TProgressbar",
-        background=ACCENT,
-        troughcolor=BORDER,
-        bordercolor=BORDER,
-        lightcolor=ACCENT,
-        darkcolor=ACCENT,
-    )
-
-    style.configure(
-        "TButton",
-        background=SURFACE,
-        foreground=TEXT,
-        bordercolor=BORDER,
-        focuscolor=SURFACE,
-        padding=(14, 8),
-        relief="flat",
-    )
-    style.map(
-        "TButton",
-        background=[("active", "#EAEEF2"), ("disabled", BG)],
-        foreground=[("disabled", "#A8B0B8")],
-    )
-
-    style.configure(
-        "Accent.TButton",
-        background=ACCENT,
-        foreground="#FFFFFF",
-        bordercolor=ACCENT,
-        focuscolor=ACCENT,
-        font=(FONT, FONT_SIZE, "bold"),
-        padding=(22, 9),
-    )
-    style.map(
-        "Accent.TButton",
-        background=[("active", ACCENT_ACTIVE), ("disabled", "#B6C6E4")],
-        foreground=[("disabled", "#EEF2F9")],
-    )
-
-    style.configure(
-        "TCombobox",
-        fieldbackground=SURFACE,
-        background=SURFACE,
-        foreground=TEXT,
-        bordercolor=BORDER,
-        arrowcolor=TEXT,
-        padding=(8, 6),
-    )
-    style.map("TCombobox", fieldbackground=[("readonly", SURFACE)])
-
-    style.configure("TSeparator", background=BORDER)
-
-
-class TTSApp:
-    """Окно приложения."""
-
-    def __init__(self, root: tk.Tk) -> None:
-        self.root = root
         self.current_path: Path | None = None
         # Кодировка файла нужна, чтобы сохранить правки в том же формате.
         self.current_encoding: str | None = None
-        # Правки пользователя не сохранены на диск.
+        # Правки пользователя не сохранены на диске.
         self.dirty = False
         # Пока идёт загрузка файла, правки не считаются пользовательскими.
         self._loading = False
-        # Сохраняем ссылку, чтобы тесты и внешний код находили приложение.
-        root.tts_app = self
+        # Ссылка для тестов и внешнего кода.
+        self.tts_app = self
 
-        root.title(f"TextToSpeech {__version__}")
-        root.geometry("860x620")
-        root.minsize(640, 520)
-        root.configure(bg=BG)
-        root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.setWindowTitle(f"TextToSpeech {__version__}")
+        self.resize(860, 620)
+        self.setMinimumSize(640, 520)
+        self.setStyleSheet(STYLE_SHEET)
 
         self.engine = PiperEngine()
         self.player = Player()
         self.last_audio: Path | None = None
         self.busy = False
         # Поток докладывает о ходе дела сюда, главный поток забирает
-        # через after(). Обмен через очередь — единственный безопасный
-        # способ передачи данных между потоками в Tkinter.
+        # через QTimer. Обмен через очередь — безопасный способ передачи
+        # данных между потоками.
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self._worker: threading.Thread | None = None
 
-        setup_styles(root)
         self._build()
+        self._timer = QTimer(self)
+        self._timer.setInterval(50)
+        self._timer.timeout.connect(self._poll_events)
+        self._timer.start()
+
         self._update_title()
         self.set_status("Готов. Откройте файл или введите текст в поле ниже.")
 
     # --- Построение интерфейса ---
 
     def _build(self) -> None:
-        outer = ttk.Frame(self.root, padding=14)
-        outer.pack(fill="both", expand=True)
+        central = QWidget(self)
+        central.setObjectName("central")
+        self.setCentralWidget(central)
 
-        self._build_header(outer)
-        self._build_toolbar(outer)
-        self._build_content(outer)
-        self._build_controls(outer)
-        self._build_statusbar(outer)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
 
-    def _build_header(self, parent: tk.Widget) -> None:
-        header = ttk.Frame(parent, style="Surface.TFrame", padding=(18, 14))
-        header.pack(fill="x")
-        header.configure(style="Surface.TFrame")
+        self._build_header(layout)
+        self._build_toolbar(layout)
+        self._build_content(layout)
+        self._build_controls(layout)
 
-        ttk.Label(header, text="TextToSpeech", style="Title.TLabel").pack(side="left")
-        ttk.Label(
-            header,
-            text="Офлайн-синтез речи на движке Piper",
-            style="Dim.TLabel",
-        ).pack(side="left", padx=(12, 0), pady=(4, 0))
+        self.status_label = QLabel("")
+        self.status_label.setObjectName("Dim")
+        layout.addWidget(self.status_label)
 
-    def _build_toolbar(self, parent: tk.Widget) -> None:
-        bar = ttk.Frame(parent, style="Surface.TFrame", padding=(18, 10))
-        bar.pack(fill="x", pady=(10, 0))
+    def _build_header(self, layout: QVBoxLayout) -> None:
+        header = QWidget()
+        header.setObjectName("card")
+        row = QHBoxLayout(header)
+        row.setContentsMargins(18, 14, 18, 14)
 
-        ttk.Button(bar, text="Открыть файл", command=self.open_file).pack(side="left")
+        title = QLabel("TextToSpeech")
+        title.setObjectName("Title")
+        subtitle = QLabel("Офлайн-синтез речи на движке Piper")
+        subtitle.setObjectName("Dim")
 
-        self.path_label = ttk.Label(bar, text="Файл не выбран", style="Dim.TLabel")
-        self.path_label.pack(side="left", padx=(14, 0))
+        row.addWidget(title)
+        row.addSpacing(12)
+        row.addWidget(subtitle, alignment=Qt.AlignmentFlag.AlignBottom)
+        layout.addWidget(header)
 
-        self.save_button = ttk.Button(
-            bar, text="Сохранить", command=self.save_file, state="disabled"
-        )
-        self.save_button.pack(side="right", padx=(0, 8))
+    def _build_toolbar(self, layout: QVBoxLayout) -> None:
+        bar = QWidget()
+        bar.setObjectName("card")
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(18, 10, 18, 10)
 
-        ttk.Button(bar, text="Очистить", command=self.clear_file).pack(side="right")
+        open_button = QPushButton("Открыть файл")
+        open_button.clicked.connect(self.open_file)
 
-    def _build_content(self, parent: tk.Widget) -> None:
-        wrapper = tk.Frame(parent, bg=BORDER, padx=1, pady=1)
-        wrapper.pack(fill="both", expand=True, pady=10)
+        self.path_label = QLabel("Файл не выбран")
+        self.path_label.setObjectName("Dim")
 
-        self.text_area = tk.Text(
-            wrapper,
-            width=80,
-            # Высоту задаём минимальной — реальный размер даёт
-            # pack(expand=True). Со значением по умолчанию (24 строки)
-            # панель управления выдавливалась за пределы окна.
-            height=1,
-            wrap="word",
-            bg=SURFACE,
-            fg=TEXT,
-            relief="flat",
-            borderwidth=0,
-            padx=16,
-            pady=14,
-            font=(FONT, 11),
-            insertbackground=TEXT,
-            insertwidth=2,
-            selectbackground="#CCE0FF",
-            highlightthickness=0,
-            undo=True,
-        )
+        clear_button = QPushButton("Очистить")
+        clear_button.clicked.connect(self.clear_file)
 
-        scroll = ttk.Scrollbar(wrapper, orient="vertical", command=self.text_area.yview)
-        self.text_area.configure(yscrollcommand=scroll.set)
+        self.save_button = QPushButton("Сохранить")
+        self.save_button.setEnabled(False)
+        self.save_button.clicked.connect(self.save_file)
 
-        scroll.pack(side="right", fill="y", padx=(0, 1), pady=1)
-        self.text_area.pack(side="left", fill="both", expand=True)
+        row.addWidget(open_button)
+        row.addSpacing(14)
+        row.addWidget(self.path_label, stretch=1)
+        row.addWidget(clear_button)
+        row.addWidget(self.save_button)
+        layout.addWidget(bar)
 
-        # Поле редактируемое: >>Modified>> срабатывает на любое изменение.
-        self.text_area.bind("<<Modified>>", self._on_text_modified)
-        self.text_area.bind("<Control-s>", lambda _e: (self.save_file(), "break")[1])
-        self.text_area.bind("<Control-o>", lambda _e: (self.open_file(), "break")[1])
+    def _build_content(self, layout: QVBoxLayout) -> None:
+        self.text_area = QPlainTextEdit()
+        self.text_area.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.text_area.setUndoRedoEnabled(True)
+        self.text_area.textChanged.connect(self._on_text_modified)
+        layout.addWidget(self.text_area, stretch=1)
 
-    def _build_controls(self, parent: tk.Widget) -> None:
-        panel = ttk.Frame(parent, style="Surface.TFrame", padding=(18, 12))
-        panel.pack(fill="x")
+        QShortcut(QKeySequence("Ctrl+S"), self, activated=self.save_file)
+        QShortcut(QKeySequence("Ctrl+O"), self, activated=self.open_file)
 
-        ttk.Label(panel, text="Голос", style="Dim.TLabel").pack(side="left")
+    def _build_controls(self, layout: QVBoxLayout) -> None:
+        panel = QWidget()
+        panel.setObjectName("card")
+        row = QHBoxLayout(panel)
+        row.setContentsMargins(18, 12, 18, 12)
 
-        self.voice_box = ttk.Combobox(
-            panel,
-            values=[v.label for v in CATALOG],
-            state="readonly",
-            width=22,
-        )
-        self.voice_box.set(self._label_of(DEFAULT_VOICE_KEY))
-        self.voice_box.pack(side="left", padx=(8, 16))
-        self.voice_box.bind("<<ComboboxSelected>>", lambda _e: self._on_voice_changed())
+        voice_label = QLabel("Голос")
+        voice_label.setObjectName("Dim")
+        self.voice_box = QComboBox()
+        self.voice_box.addItems([v.label for v in CATALOG])
+        self.voice_box.setCurrentText(self._label_of(DEFAULT_VOICE_KEY))
+        self.voice_box.currentIndexChanged.connect(self._on_voice_changed)
 
-        ttk.Label(panel, text="Скорость", style="Dim.TLabel").pack(side="left")
+        speed_label = QLabel("Скорость")
+        speed_label.setObjectName("Dim")
+        self.speed_box = QComboBox()
+        self.speed_box.addItems(["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"])
+        self.speed_box.setCurrentText("1.0x")
 
-        self.speed_box = ttk.Combobox(
-            panel,
-            values=["0.5x", "0.75x", "1.0x", "1.25x", "1.5x", "2.0x"],
-            state="readonly",
-            width=7,
-        )
-        self.speed_box.set("1.0x")
-        self.speed_box.pack(side="left", padx=(8, 16))
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setVisible(False)
 
-        self.play_button = ttk.Button(
-            panel,
-            text="Стоп",
-            command=self.stop_playback,
-            state="disabled",
-        )
-        self.play_button.pack(side="right", padx=(0, 8))
+        self.stop_button = QPushButton("Стоп")
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self.stop_playback)
 
-        self.speak_button = ttk.Button(
-            panel,
-            text="Озвучить",
-            style="Accent.TButton",
-            command=self.on_synthesize,
-        )
-        self.speak_button.pack(side="right")
+        self.speak_button = QPushButton("Озвучить")
+        self.speak_button.setObjectName("Accent")
+        self.speak_button.clicked.connect(self.on_synthesize)
 
-        self.progress = ttk.Progressbar(panel, mode="determinate", length=160)
-        self.progress.pack(side="right", padx=(0, 16))
-        self.progress.pack_forget()
-
-    def _build_statusbar(self, parent: tk.Widget) -> None:
-        self.status_label = ttk.Label(parent, text="", style="Status.TLabel")
-        self.status_label.pack(fill="x", pady=(10, 0))
+        row.addWidget(voice_label)
+        row.addSpacing(8)
+        row.addWidget(self.voice_box)
+        row.addSpacing(16)
+        row.addWidget(speed_label)
+        row.addSpacing(8)
+        row.addWidget(self.speed_box)
+        row.addStretch(1)
+        row.addWidget(self.progress)
+        row.addSpacing(16)
+        row.addWidget(self.stop_button)
+        row.addSpacing(8)
+        row.addWidget(self.speak_button)
+        layout.addWidget(panel)
 
     # --- Действия ---
 
     def open_file(self) -> None:
         """Показывает диалог выбора файла и загружает выбранный."""
-        selected = filedialog.askopenfilename(
-            title="Открыть текстовый файл",
-            filetypes=FILE_TYPES,
+        selected, _ = QFileDialog.getOpenFileName(
+            self, "Открыть текстовый файл", "", FILE_TYPES
         )
         if not selected:
             return
@@ -364,56 +323,51 @@ class TTSApp:
         )
 
     def _set_text(self, content: str) -> None:
-        """Подставляет текст в поле."""
+        """Подставляет текст в поле, не помечая его как правку пользователя."""
         self._loading = True
         try:
-            self.text_area.configure(state="normal")
-            self.text_area.delete("1.0", "end")
-            self.text_area.insert("1.0", content)
-            # Сбрасываем флаг: иначе следующая же правка не даст события.
-            self.text_area.edit_modified(False)
+            self.text_area.setPlainText(content)
         finally:
             self._loading = False
+        # Курсор в конце: следующая правка дописывается, а не вставляется
+        # в начало загруженного текста.
+        self.text_area.moveCursor(QTextCursor.MoveOperation.End)
 
     @property
     def current_text(self) -> str:
         """Актуальный текст из поля — единственный источник истины."""
-        return self.text_area.get("1.0", "end-1c")
+        return self.text_area.toPlainText()
 
     # --- Правки и сохранение ---
 
-    def _on_text_modified(self, _event: tk.Event | None = None) -> None:
-        if not self.text_area.edit_modified():
-            return
-        # Флаг служит только сигналом для нас — сбрасываем сразу.
-        self.text_area.edit_modified(False)
+    def _on_text_modified(self, *_args: object) -> None:
         if self._loading or self.dirty:
             return
         self._set_dirty(True)
 
     def _set_dirty(self, dirty: bool) -> None:
         self.dirty = dirty
-        self.save_button.configure(state="normal" if dirty else "disabled")
+        self.save_button.setEnabled(dirty)
         self._update_title()
         self._refresh_path_label()
 
     def _update_title(self) -> None:
         if self.current_path:
             mark = " *" if self.dirty else ""
-            self.root.title(f"{self.current_path.name}{mark} — TextToSpeech {__version__}")
+            self.setWindowTitle(f"{self.current_path.name}{mark} — TextToSpeech {__version__}")
         else:
-            self.root.title(f"TextToSpeech {__version__}")
+            self.setWindowTitle(f"TextToSpeech {__version__}")
 
     def _refresh_path_label(self) -> None:
         if self.current_path is None:
-            self.path_label.configure(text="Новый текст")
+            self.path_label.setText("Новый текст")
             return
         parts = [self.current_path.name]
         if self.current_encoding:
             parts.append(self.current_encoding)
         if self.dirty:
             parts.append("изменён")
-        self.path_label.configure(text=" · ".join(parts))
+        self.path_label.setText(" · ".join(parts))
 
     def save_file(self) -> None:
         """Сохраняет текст в файл; если файла нет — спрашивает имя."""
@@ -434,10 +388,8 @@ class TTSApp:
         self.set_status(f"Сохранено: {path.name}", success=True)
 
     def _ask_save_path(self) -> Path | None:
-        selected = filedialog.asksaveasfilename(
-            title="Сохранить текст",
-            defaultextension=".txt",
-            filetypes=FILE_TYPES,
+        selected, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить текст", "", FILE_TYPES, "*.txt"
         )
         return Path(selected) if selected else None
 
@@ -449,14 +401,19 @@ class TTSApp:
         if not self.dirty:
             return True
 
-        answer = messagebox.askyesnocancel(
+        box = QMessageBox(
+            QMessageBox.Icon.Question,
             "Несохранённые изменения",
             f"{action}\n\nТекст изменён, изменения не сохранены.",
-            parent=self.root,
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            self,
         )
-        if answer is None:
+        answer = box.exec()
+        if answer == QMessageBox.StandardButton.Cancel:
             return False
-        if answer:
+        if answer == QMessageBox.StandardButton.Save:
             self.save_file()
             return not self.dirty
         return True
@@ -472,10 +429,13 @@ class TTSApp:
         self._set_dirty(False)
         self.set_status("Поле очищено.")
 
-    def on_close(self) -> None:
-        if self._confirm_discard("Закрыть программу?"):
-            self.player.stop()
-            self.root.destroy()
+    def closeEvent(self, event) -> None:
+        """Не даёт закрыть окно с несохранёнными правками."""
+        if not self._confirm_discard("Закрыть программу?"):
+            event.ignore()
+            return
+        self.player.stop()
+        super().closeEvent(event)
 
     # --- Голос и скорость ---
 
@@ -485,13 +445,13 @@ class TTSApp:
 
     @property
     def selected_voice(self) -> Voice:
-        return find_voice_by_label(self.voice_box.get())
+        return find_voice_by_label(self.voice_box.currentText())
 
     @property
     def selected_speed(self) -> float:
-        return float(self.speed_box.get().rstrip("x"))
+        return float(self.speed_box.currentText().rstrip("x"))
 
-    def _on_voice_changed(self) -> None:
+    def _on_voice_changed(self, *_args: object) -> None:
         voice = self.selected_voice
         if voice.is_downloaded:
             self.set_status(f"Голос {voice.title} уже загружен.")
@@ -517,8 +477,7 @@ class TTSApp:
 
         self._set_busy(True)
         self.player.stop()
-        self.progress.configure(value=0, maximum=100)
-        self.progress.pack(side="right", padx=(0, 16))
+        self.progress.setValue(0)
 
         if voice.is_downloaded:
             self.set_status(f"Синтез голосом {voice.title}...")
@@ -531,7 +490,6 @@ class TTSApp:
             daemon=True,
         )
         self._worker.start()
-        self._poll_events()
 
     def _synthesize_worker(self, text: str, voice: Voice, speed: float) -> None:
         """Синтез в отдельном потоке. Всё общение с UI — через очередь."""
@@ -577,14 +535,11 @@ class TTSApp:
         except queue.Empty:
             pass
 
-        if self.busy:
-            self.root.after(50, self._poll_events)
-
     def _handle_event(self, kind: str, payload: object) -> None:
         if kind == "download":
-            self.progress.configure(value=int(payload))  # type: ignore[arg-type]
+            self.progress.setValue(int(payload))  # type: ignore[arg-type]
         elif kind == "progress":
-            self.progress.configure(value=int(payload))  # type: ignore[arg-type]
+            self.progress.setValue(int(payload))  # type: ignore[arg-type]
             self.set_status(f"Синтез: {payload}%")
         elif kind == "status":
             self.set_status(str(payload))
@@ -595,7 +550,7 @@ class TTSApp:
             dest, duration, parts = payload  # type: ignore[misc]
             self.last_audio = dest  # type: ignore[assignment]
             self._set_busy(False)
-            self.play_button.configure(state="normal")
+            self.stop_button.setEnabled(True)
             played = self.player.play(self.last_audio)
             self.set_status(
                 f"Готово: {duration:.1f} c, {parts} "
@@ -606,17 +561,16 @@ class TTSApp:
 
     def _set_busy(self, busy: bool) -> None:
         self.busy = busy
-        self.speak_button.configure(state="disabled" if busy else "normal")
-        self.voice_box.configure(state="disabled" if busy else "readonly")
-        self.speed_box.configure(state="disabled" if busy else "readonly")
-        if not busy:
-            self.progress.pack_forget()
+        self.speak_button.setEnabled(not busy)
+        self.voice_box.setEnabled(not busy)
+        self.speed_box.setEnabled(not busy)
+        self.progress.setVisible(busy)
 
     # --- Воспроизведение ---
 
     def stop_playback(self) -> None:
         self.player.stop()
-        self.play_button.configure(state="disabled")
+        self.stop_button.setEnabled(False)
         self.set_status("Воспроизведение остановлено.")
 
     def set_status(self, text: str, *, error: bool = False, success: bool = False) -> None:
@@ -626,17 +580,30 @@ class TTSApp:
             color = SUCCESS
         else:
             color = TEXT_DIM
-        self.status_label.configure(text=text, foreground=color)
+        self.status_label.setStyleSheet(f"color: {color};")
+        self.status_label.setText(text)
+
+    def center_on_screen(self) -> None:
+        """Ставит окно по центру доступной области экрана."""
+        screen = self.qapp.primaryScreen()
+        if screen is None:
+            return
+        frame = self.frameGeometry()
+        frame.moveCenter(screen.availableGeometry().center())
+        self.move(frame.topLeft())
 
 
-def build_window() -> tk.Tk:
-    root = tk.Tk()
-    TTSApp(root)
-    return root
+def build_window() -> TTSApp:
+    """Создаёт приложение, центрирует и показывает главное окно."""
+    window = TTSApp()
+    window.show()
+    window.center_on_screen()
+    return window
 
 
 def main() -> None:
-    build_window().mainloop()
+    window = build_window()
+    window.qapp.exec()
 
 
 if __name__ == "__main__":

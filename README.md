@@ -1,7 +1,7 @@
 # TextToSpeech
 
 Офлайн-приложение для синтеза речи из текста. Основной движок — [Piper],
-графический интерфейс — Tkinter.
+графический интерфейс — PyQt6.
 
 ## Как это работает
 
@@ -27,8 +27,8 @@ poetry install
 Дополнительные движки ставятся по желанию:
 
 ```bash
-poetry install --with edge      # онлайн, Microsoft
-poetry install --with silero    # офлайн, PyTorch (~2.5 ГБ)
+poetry install -E edge      # онлайн, Microsoft
+poetry install -E silero    # офлайн, PyTorch (~2.5 ГБ)
 ```
 
 ## Запуск
@@ -36,6 +36,21 @@ poetry install --with silero    # офлайн, PyTorch (~2.5 ГБ)
 ```bash
 poetry run texttospeech
 ```
+
+## Разработка
+
+Проверки обязательны после любого изменения кода:
+
+```bash
+poetry run ruff check .
+poetry run pytest -q
+```
+
+Тесты интерфейса запускаются в оффскрин-режиме Qt (`tests/conftest.py`),
+поэтому для них не нужен видимый экран.
+
+Поддерживается Python 3.14.x. Движки `edge` и `silero` ставятся как extras
+(см. «Установка»), `torch` и `torchaudio` фиксируются на совместимой ветке 2.11.
 
 ## Как пользоваться
 

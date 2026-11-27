@@ -1,312 +1,291 @@
-"""Smoke-тесты интерфейса."""
+"""Smoke-тесты интерфейса на PyQt6."""
 from pathlib import Path
 
 import pytest
+from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton
 
-tk = pytest.importorskip("tkinter", reason="Tkinter недоступен на этой платформе")
-
-from texttospeech.app import (  # noqa: E402
-    TTSApp,
-    build_window,
-    plural_ru,
-    read_text_file,
-)
+from texttospeech.app import TTSApp, build_window, plural_ru, read_text_file
 
 
-@pytest.fixture(scope="session")
-def root():
-    """Одно окно на всю сессию.
-
-    Tkinter не любит, когда корневых окон несколько: после destroy()
-    первого корня следующий Tk() падает с TclError.
-    """
-    window = build_window()
-    yield window
-    window.destroy()
+def type_text(window: TTSApp, content: str) -> None:
+    """Имитирует ввод: сигнал textChanged должен сработать по-настоящему."""
+    window.text_area.insertPlainText(content)
+    QApplication.processEvents()
 
 
-@pytest.fixture
-def app(root) -> TTSApp:
-    # Сбрасываем состояние напрямую: dirty=False делает подтверждение
-    # при очистке ненужным, иначе тест завис бы на модальном окне.
-    root.tts_app._set_text("")
-    root.tts_app.current_path = None
-    root.tts_app.current_encoding = None
-    root.tts_app._set_dirty(False)
-    return root.tts_app
-
-
-@pytest.fixture
-def quiet_dialogs(monkeypatch):
-    """Подменяет модальные диалоги, чтобы тесты не висели."""
-    calls: list[str] = []
-
-    def askyesnocancel(*args, **kwargs):
-        calls.append("askyesnocancel")
-        return None
-
-    def asksaveasfilename(*args, **kwargs):
-        calls.append("asksaveasfilename")
-        return ""
-
-    def askopenfilename(*args, **kwargs):
-        calls.append("askopenfilename")
-        return ""
-
-    monkeypatch.setattr("texttospeech.app.messagebox.askyesnocancel", askyesnocancel)
-    monkeypatch.setattr("texttospeech.app.filedialog.asksaveasfilename", asksaveasfilename)
-    monkeypatch.setattr("texttospeech.app.filedialog.askopenfilename", askopenfilename)
-    return calls
-
-
-def type_text(app: TTSApp, content: str) -> None:
-    """Имитирует ввод с клавиатуры: событие <<Modified>> нужно настоящее."""
-    app.text_area.insert("end", content)
-    app.text_area.edit_modified(True)
-    app._on_text_modified()
-
-
-def find_widgets(root, widget_type):
-    """Ищет виджеты по всему дереву, а не только среди прямых потомков."""
-    found = []
-    for child in root.winfo_children():
-        if isinstance(child, widget_type):
-            found.append(child)
-        found.extend(find_widgets(child, widget_type))
-    return found
+def find_buttons(window: TTSApp) -> list[str]:
+    return [button.text() for button in window.findChildren(QPushButton)]
 
 
 # --- Окно ---
 
-def test_window_creates(root) -> None:
-    assert root.winfo_exists() == 1
-    assert root.title().startswith("TextToSpeech")
+def test_window_creates(window: TTSApp) -> None:
+    assert window.windowTitle().startswith("TextToSpeech")
 
 
-def test_window_geometry(root) -> None:
-    root.update_idletasks()
-    width, height = root.winfo_width(), root.winfo_height()
+def test_window_geometry(window: TTSApp) -> None:
+    assert window.width() >= 640, f"окно слишком узкое: {window.width()}"
+    assert window.height() >= 520, f"окно слишком низкое: {window.height()}"
 
-    assert width >= 640, f"окно слишком узкое: {width}"
-    assert height >= 480, f"окно слишком низкое: {height}"
+
+def test_build_window_shows_it(qapp: QApplication) -> None:
+    window = build_window()
+    assert window.isVisible()
+    window.close()
+    qapp.processEvents()
+
+
+def test_build_window_centers_on_screen(qapp: QApplication) -> None:
+    screen = qapp.primaryScreen()
+    if screen is None:
+        pytest.skip("нет доступного экрана")
+
+    window = build_window()
+    qapp.processEvents()
+
+    center = screen.availableGeometry().center()
+    frame = window.frameGeometry().center()
+    # Оффскрин-платформа может сдвинуть рамку на пару пикселей.
+    assert abs(frame.x() - center.x()) <= 5
+    assert abs(frame.y() - center.y()) <= 5
+    window.close()
 
 
 # --- Виджеты ---
 
-def test_text_area_exists(root) -> None:
-    assert find_widgets(root, tk.Text), "в окне нет поля для текста"
+def test_text_area_exists(window: TTSApp) -> None:
+    assert window.text_area is not None
 
 
-def test_buttons_present(root) -> None:
-    """Должны быть кнопки открытия и озвучивания."""
-    from tkinter import ttk
-
-    labels = []
-    for button in find_widgets(root, ttk.Button):
-        try:
-            labels.append(button.cget("text"))
-        except tk.TclError:
-            pass
-
+def test_buttons_present(window: TTSApp) -> None:
+    labels = find_buttons(window)
     assert "Открыть файл" in labels, f"нет кнопки открытия: {labels}"
     assert "Озвучить" in labels, f"нет кнопки озвучивания: {labels}"
 
 
-def test_empty_state(app) -> None:
+def test_empty_state(window: TTSApp) -> None:
     """До открытия файла текст пуст и путь не выбран."""
-    assert app.current_path is None
-    assert app.text_area.get("1.0", "end").strip() == ""
+    assert window.current_path is None
+    assert window.text_area.toPlainText().strip() == ""
 
 
 # --- Редактирование ---
 
-def test_text_area_is_editable(app) -> None:
-    """Поле должно быть доступно для ввода, а не только для чтения."""
-    assert str(app.text_area.cget("state")) == "normal"
+def test_text_area_is_editable(window: TTSApp) -> None:
+    assert not window.text_area.isReadOnly()
 
 
-def test_typing_marks_dirty(app) -> None:
-    assert app.dirty is False
+def test_typing_marks_dirty(window: TTSApp) -> None:
+    assert window.dirty is False
 
-    type_text(app, "Привет")
+    type_text(window, "Привет")
 
-    assert app.dirty is True
-
-
-def test_save_button_enabled_only_when_dirty(app) -> None:
-    assert str(app.save_button.cget("state")) == "disabled"
-
-    type_text(app, "изменение")
-    assert str(app.save_button.cget("state")) == "normal"
-
-    app._set_dirty(False)
-    assert str(app.save_button.cget("state")) == "disabled"
+    assert window.dirty is True
 
 
-def test_current_text_reflects_edits(app) -> None:
-    type_text(app, "Новый текст")
-    assert app.current_text == "Новый текст"
+def test_save_button_enabled_only_when_dirty(window: TTSApp) -> None:
+    assert window.save_button.isEnabled() is False
+
+    type_text(window, "изменение")
+    assert window.save_button.isEnabled() is True
+
+    window._set_dirty(False)
+    assert window.save_button.isEnabled() is False
 
 
-def test_title_marks_unsaved(app, tmp_path: Path) -> None:
+def test_current_text_reflects_edits(window: TTSApp) -> None:
+    type_text(window, "Новый текст")
+    assert window.current_text == "Новый текст"
+
+
+def test_title_marks_unsaved(window: TTSApp, tmp_path: Path) -> None:
     source = tmp_path / "t.txt"
     source.write_text("исходный", encoding="utf-8")
-    app._load_path(source)
+    window._load_path(source)
 
-    assert "*" not in app.root.title()
+    assert "*" not in window.windowTitle()
 
-    type_text(app, "!")
-    assert "*" in app.root.title(), "звездочка в заголовке не появилась"
+    type_text(window, "!")
+    assert "*" in window.windowTitle(), "звездочка в заголовке не появилась"
 
-    app.save_file()
-    assert "*" not in app.root.title()
+    window.save_file()
+    assert "*" not in window.windowTitle()
 
 
-def test_path_label_marks_unsaved(app, tmp_path: Path) -> None:
+def test_path_label_marks_unsaved(window: TTSApp, tmp_path: Path) -> None:
     source = tmp_path / "t.txt"
     source.write_text("исходный", encoding="utf-8")
-    app._load_path(source)
+    window._load_path(source)
 
-    assert "изменён" not in app.path_label.cget("text")
+    assert "изменён" not in window.path_label.text()
 
-    type_text(app, "!")
-    assert "изменён" in app.path_label.cget("text")
+    type_text(window, "!")
+    assert "изменён" in window.path_label.text()
 
 
-def test_loading_file_does_not_mark_dirty(app, tmp_path: Path) -> None:
+def test_loading_file_does_not_mark_dirty(window: TTSApp, tmp_path: Path) -> None:
     """Загрузка файла — не пользовательская правка."""
     source = tmp_path / "t.txt"
     source.write_text("содержимое файла", encoding="utf-8")
 
-    app._load_path(source)
+    window._load_path(source)
 
-    assert app.dirty is False
-    assert app.current_text == "содержимое файла"
+    assert window.dirty is False
+    assert window.current_text == "содержимое файла"
 
 
 # --- Сохранение ---
 
-def test_save_writes_to_same_file(app, tmp_path: Path) -> None:
+def test_save_writes_to_same_file(window: TTSApp, tmp_path: Path) -> None:
     source = tmp_path / "t.txt"
     source.write_text("было", encoding="utf-8")
-    app._load_path(source)
+    window._load_path(source)
 
-    type_text(app, " стало")
-    app.save_file()
+    type_text(window, " стало")
+    window.save_file()
 
     assert source.read_text(encoding="utf-8") == "было стало"
-    assert app.dirty is False
+    assert window.dirty is False
 
 
-def test_save_keeps_original_encoding(app, tmp_path: Path) -> None:
+def test_save_keeps_original_encoding(window: TTSApp, tmp_path: Path) -> None:
     """Файл в windows-1251 должен остаться в windows-1251."""
     source = tmp_path / "t.txt"
     source.write_bytes("было".encode("cp1251"))
-    app._load_path(source)
+    window._load_path(source)
 
-    type_text(app, " стало")
-    app.save_file()
+    type_text(window, " стало")
+    window.save_file()
 
     assert source.read_bytes() == "было стало".encode("cp1251")
 
 
-def test_save_without_file_asks_path(app, quiet_dialogs, tmp_path: Path) -> None:
-    type_text(app, "текст без файла")
-    app.save_file()
+def test_save_without_file_asks_path(
+    window: TTSApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_path(*_args, **_kwargs):
+        return "", ""
 
-    assert "asksaveasfilename" in quiet_dialogs
-    assert app.current_path is None, "без выбранного пути файл не должен появиться"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", no_path)
+
+    type_text(window, "текст без файла")
+    window.save_file()
+
+    assert window.current_path is None, "без выбранного пути файл не должен появиться"
 
 
-def test_save_reports_error(app, tmp_path: Path) -> None:
+def test_save_reports_error(window: TTSApp, tmp_path: Path) -> None:
     source = tmp_path / "sub" / "t.txt"  # папки нет — запись провалится
-    app.current_path = source
-    type_text(app, "данные")
+    window.current_path = source
+    type_text(window, "данные")
 
-    app.save_file()
+    window.save_file()
 
-    assert "Не удалось сохранить" in app.status_label.cget("text")
-    assert str(app.status_label.cget("foreground")) == "#CF222E"
+    assert "Не удалось сохранить" in window.status_label.text()
 
 
 # --- Несохранённые изменения ---
 
-def test_cancel_keeps_everything(app, quiet_dialogs, tmp_path: Path) -> None:
+def test_cancel_keeps_everything(window: TTSApp, tmp_path: Path) -> None:
     """Отмена в диалоге не должна ничего терять."""
     source = tmp_path / "t.txt"
     source.write_text("первый", encoding="utf-8")
-    app._load_path(source)
-    type_text(app, " правка")
+    window._load_path(source)
+    type_text(window, " правка")
 
-    app.clear_file()  # диалог вернёт None (отмена)
+    def cancel(_action: str) -> bool:
+        return False
 
-    assert app.current_path == source
-    assert app.current_text == "первый правка"
-    assert app.dirty is True
+    window._confirm_discard = cancel  # type: ignore[method-assign]
+    window.clear_file()
+
+    assert window.current_path == source
+    assert window.current_text == "первый правка"
+    assert window.dirty is True
 
 
-def test_discard_drops_changes(app, quiet_dialogs, monkeypatch, tmp_path: Path) -> None:
-    """Ответ «Нет» отбрасывает правки."""
-    monkeypatch.setattr("texttospeech.app.messagebox.askyesnocancel", lambda *a, **k: False)
-
+def test_discard_drops_changes(window: TTSApp, tmp_path: Path) -> None:
+    """Ответ «Не сохранять» отбрасывает правки."""
     source = tmp_path / "t.txt"
     source.write_text("первый", encoding="utf-8")
-    app._load_path(source)
-    type_text(app, " правка")
+    window._load_path(source)
+    type_text(window, " правка")
 
-    app.clear_file()
+    def discard(_action: str) -> bool:
+        return True
 
-    assert app.current_path is None
-    assert app.current_text == ""
+    window._confirm_discard = discard  # type: ignore[method-assign]
+    window.clear_file()
+
+    assert window.current_path is None
+    assert window.current_text == ""
 
 
-def test_discard_prompt_not_shown_when_clean(app, quiet_dialogs, tmp_path: Path) -> None:
-    source = tmp_path / "t.txt"
-    source.write_text("первый", encoding="utf-8")
-    app._load_path(source)
+def test_discard_prompt_not_shown_when_clean(
+    window: TTSApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
 
-    app.clear_file()
+    class FakeMessageBox:
+        def __init__(self, *_args, **_kwargs):
+            calls.append("prompt")
 
-    assert "askyesnocancel" not in quiet_dialogs, "чистый файл не должен спрашивать"
+        @staticmethod
+        def exec() -> int:
+            return int(QMessageBox.StandardButton.Discard)
+
+    monkeypatch.setattr("texttospeech.app.QMessageBox", FakeMessageBox)
+    window.clear_file()
+
+    assert not calls, "чистый файл не должен спрашивать"
 
 
 # --- Загрузка файла ---
 
-def test_open_file_loads_text(app, root, tmp_path: Path) -> None:
+def test_open_file_loads_text(
+    window: TTSApp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     sample = tmp_path / "speech.txt"
     sample.write_text("Привет! Это тестовый текст.", encoding="utf-8")
 
-    app._load_path(sample)
-    root.update_idletasks()
+    def chosen(*_args, **_kwargs):
+        return str(sample), ""
 
-    assert app.current_path == sample
-    assert "тестовый текст" in app.text_area.get("1.0", "end")
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", chosen)
+    window.open_file()
+
+    assert window.current_path == sample
+    assert "тестовый текст" in window.text_area.toPlainText()
 
 
-def test_open_file_updates_status(app, root, tmp_path: Path) -> None:
+def test_open_file_updates_status(window: TTSApp, tmp_path: Path) -> None:
     sample = tmp_path / "a.txt"
     sample.write_text("одно два три", encoding="utf-8")
-
-    app._load_path(sample)
-    status = app.status_label.cget("text")
+    window._load_path(sample)
+    status = window.status_label.text()
 
     assert "3" in status, f"в статусе нет числа слов: {status}"
 
 
-def test_clear_file_resets(app) -> None:
+def test_clear_file_resets(window: TTSApp) -> None:
     sample = Path("dummy.txt")
-    app._load_path(sample)
-    app.clear_file()
+    window._load_path(sample)
 
-    assert app.current_path is None
-    assert app.text_area.get("1.0", "end").strip() == ""
+    def discard(_action: str) -> bool:
+        return True
+
+    window._confirm_discard = discard  # type: ignore[method-assign]
+    window.clear_file()
+
+    assert window.current_path is None
+    assert window.text_area.toPlainText().strip() == ""
 
 
-def test_missing_file_reports_error(app, tmp_path: Path) -> None:
-    app._load_path(tmp_path / "нет-такого.txt")
+def test_missing_file_reports_error(window: TTSApp, tmp_path: Path) -> None:
+    window._load_path(tmp_path / "нет-такого.txt")
 
-    assert app.current_path is None
-    assert str(app.status_label.cget("foreground")) == "#CF222E"
+    assert window.current_path is None
+    assert "Не удалось прочитать файл" in window.status_label.text()
 
 
 # --- Чтение кодировок ---
@@ -333,16 +312,12 @@ def test_read_utf8_bom(tmp_path: Path) -> None:
     f.write_bytes("Привет".encode("utf-8-sig"))
 
     content, encoding = read_text_file(f)
-    assert content == "Привет", "BOM не удалён"
+    assert content == "Привет"
     assert encoding == "utf-8-sig"
 
 
 def test_plain_utf8_not_treated_as_bom(tmp_path: Path) -> None:
-    """Обычный utf-8 не должен помечаться как utf-8-sig.
-
-    Иначе при сохранении в файл попал бы лишний BOM. Это регрессия,
-    найденная тестом на круговую запись.
-    """
+    """Обычный utf-8 не должен помечаться как utf-8-sig."""
     f = tmp_path / "plain.txt"
     f.write_text("Привет", encoding="utf-8")
 

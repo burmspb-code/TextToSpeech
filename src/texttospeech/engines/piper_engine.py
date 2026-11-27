@@ -64,9 +64,8 @@ class PiperEngine:
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         started = time.perf_counter()
-        with _SYNTH_LOCK:
-            with wave.open(str(dest), "wb") as wav_file:
-                engine.synthesize_wav(text, wav_file, syn_config=config)
+        with _SYNTH_LOCK, wave.open(str(dest), "wb") as wav_file:
+            engine.synthesize_wav(text, wav_file, syn_config=config)
         elapsed = time.perf_counter() - started
 
         with wave.open(str(dest)) as wav_file:

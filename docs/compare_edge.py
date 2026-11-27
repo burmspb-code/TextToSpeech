@@ -6,12 +6,11 @@ NoAudioReceived — сервер открывает соединение и за
 встречается вообще. Поэтому в приложении это запасной движок,
 а основной — Piper.
 
-Установка: poetry install --with edge
+Установка: poetry install -E edge
 """
 import asyncio
 
 import edge_tts
-
 from _common import ensure_output_dir
 
 CASES = [

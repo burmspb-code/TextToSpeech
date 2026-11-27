@@ -2,9 +2,8 @@
 import time
 import wave
 
-from piper import PiperVoice
-
 from _common import VOICES_DIR, ensure_output_dir
+from piper import PiperVoice
 
 MODEL = VOICES_DIR / "ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx"
 TEXT = "Привет! Это проверка скорости синтеза на достаточно длинном тексте. " * 5

@@ -23,3 +23,14 @@ models/
 .ruff_cache/
 .mypy_cache/
 dist/
+
+# --- Агентский workflow (правило продублировано в глобальный ignore) ---
+/AGENTS.md
+/.opencode/
+/КОМАНДЫ.md
+/ИНСТРУКЦИЯ.md
+/docs/INDEX.md
+/docs/workflow.md
+/docs/handoff.md
+/docs/decisions.md
+# /docs/topics/ — исключение: карточки тем хранятся в git

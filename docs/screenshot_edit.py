@@ -2,35 +2,21 @@
 
     poetry run python docs/screenshot_edit.py
 """
-import subprocess
 from pathlib import Path
 
-import tkinter as tk
+from PyQt6.QtWidgets import QApplication
 
 from texttospeech.app import TTSApp
 
 OUT = Path(__file__).resolve().parents[1] / "output"
 
 
-def capture(widget: tk.Misc, dest: Path) -> None:
-    x, y = widget.winfo_rootx(), widget.winfo_rooty()
-    w, h = widget.winfo_width(), widget.winfo_height()
-    script = f"""
-Add-Type -AssemblyName System.Drawing
-$bmp = New-Object System.Drawing.Bitmap {w}, {h}
-$g = [System.Drawing.Graphics]::FromImage($bmp)
-$g.CopyFromScreen({x}, {y}, 0, 0, $bmp.Size)
-$bmp.Save('{dest}', [System.Drawing.Imaging.ImageFormat]::Png)
-$g.Dispose(); $bmp.Dispose()
-"""
-    subprocess.run(["powershell", "-NoProfile", "-Command", script], check=True)
-
-
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
 
-    root = tk.Tk()
-    app = TTSApp(root)
+    qapp = QApplication.instance() or QApplication([])
+    window = TTSApp()
+    window.show()
 
     sample = OUT / "example.txt"
     sample.write_text(
@@ -42,24 +28,21 @@ def main() -> None:
         "Ctrl+S сохраняет правки обратно в файл.\n",
         encoding="utf-8",
     )
-    app._load_path(sample)
+    window._load_path(sample)
 
     # Имитируем ввод: включаем несохранённые изменения.
-    app.text_area.insert("end", "\nПравка в окне — синтез её услышит.")
-    app.text_area.edit_modified(True)
-    app._on_text_modified()
+    window.text_area.insertPlainText("\nПравка в окне — синтез её услышит.")
+    qapp.processEvents()
 
-    root.update_idletasks()
-    root.update()
-    root.lift()
-    root.attributes("-topmost", True)
-    root.update()
+    qapp.processEvents()
+    window.raise_()
+    window.activateWindow()
 
     dest = OUT / "screenshot_edit.png"
-    capture(root, dest)
+    window.grab().save(str(dest))
     print(f"скриншот сохранён: {dest}")
 
-    root.destroy()
+    window.close()
 
 
 if __name__ == "__main__":

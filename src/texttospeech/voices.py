@@ -3,10 +3,9 @@
 Модель — обычный файл .onnx весом ~60 МБ. Интернет нужен только для
 первоначального скачивания, дальше синтез работает полностью офлайн.
 """
-import re
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator
 
 import requests
 

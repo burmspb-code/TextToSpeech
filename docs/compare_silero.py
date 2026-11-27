@@ -6,9 +6,8 @@
 """
 import time
 
-from silero_tts.silero_tts import SileroTTS
-
 from _common import ensure_output_dir
+from silero_tts.silero_tts import SileroTTS
 
 CASES = [
     ("ru", "v5_turkic", "Привет! Это офлайн синтез Silero."),
