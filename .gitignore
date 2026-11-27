@@ -9,10 +9,9 @@ __pycache__/
 .idea/
 .vscode/
 
-# --- Сгенерированное аудио ---
-output/*.wav
-output/*.mp3
-output/*.ogg
+# --- Сгенерированные файлы (аудио, скриншоты, примеры) ---
+output/*
+!output/.gitkeep
 
 # --- Модели (скачиваются при установке, ~60 МБ каждая) ---
 models/
@@ -23,3 +22,15 @@ models/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+dist/
+
+# --- Агентский workflow (правило продублировано в глобальный ignore) ---
+/AGENTS.md
+/.opencode/
+/КОМАНДЫ.md
+/ИНСТРУКЦИЯ.md
+/docs/INDEX.md
+/docs/workflow.md
+/docs/handoff.md
+/docs/decisions.md
+# /docs/topics/ — исключение: карточки тем хранятся в git
